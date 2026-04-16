@@ -1,7 +1,8 @@
 let connection;
 let numSlides = parseInt((document.getElementsByClassName("page-label")[0].innerHTML).split(" ")[0]);
-let baseUrl = window.location.href;
+let baseUrl = window.location.href.split("?")[0];
 let metadataEndpoint = baseUrl.charAt(baseUrl.length-1) == "/" ? baseUrl + "page_data/" : baseUrl + "/page_data/";
+let csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
 let slideImageUrls = [];
 
 let slideDeckAlreadyDownloaded = false; //cannot download the slide deck more than once on the same session
@@ -17,21 +18,36 @@ let userIsAuthenticated = () => {
 }
 
 let getSlideImageUrls = async () => {
+    let timezoneOffset = new Date().getTimezoneOffset() * -60;
+    let viewLoadTime = Math.floor(Date.now() / 1000);
     for(let i=1; i<=numSlides; i++) {
-        let url = metadataEndpoint + String(i);
-        await fetch(url)
-        .then((response) => {
-            return response.json();
-        })
-        .then((data) => {
-            slideImageUrls.push(data.imageUrl);
-        })
+        let url = metadataEndpoint + String(i) + `?timezoneOffset=${timezoneOffset}&viewLoadTime=${viewLoadTime}`;
+        let response = await fetch(url, {
+            headers: {
+                'accept': 'application/json, text/javascript, */*; q=0.01',
+                'x-csrf-token': csrfToken,
+                'x-requested-with': 'XMLHttpRequest'
+            }
+        });
+        if (!response.ok) {
+            throw new Error(`Failed to fetch page data for slide ${i}: ${response.status}`);
+        }
+        let data = await response.json();
+        slideImageUrls.push(data.imageUrl);
     }
 }
 
 let generateSlideDeckPdf = async () => {
-    await getSlideImageUrls();
-    buildPdf(slideImageUrls);
+    try {
+        await getSlideImageUrls();
+        await buildPdf(slideImageUrls);
+    } catch (e) {
+        console.error("Error generating PDF:", e);
+        slideDeckGenerationInProgress = false;
+        slideDeckAlreadyDownloaded = false;
+        hideCustomAlert();
+        showDefaultAlert("Error generating PDF. Please reload the page and try again.");
+    }
 }
 
 chrome.runtime.onConnect.addListener((port) => {
